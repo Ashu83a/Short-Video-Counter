@@ -34,10 +34,21 @@ class ReelService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        val pkg = event.packageName?.toString() ?: return
-        val root = rootInActiveWindow ?: return
+        val eventPkg = event.packageName?.toString() ?: return
+        val supported = setOf("com.instagram.android", "com.google.android.youtube", "com.facebook.katana", "com.facebook.lite")
 
-        if (!isShortVideoScreen(pkg, root)) {
+        // Events now arrive from every app. Ignore other apps unless the bubble is showing.
+        if (eventPkg !in supported && bubble == null) return
+
+        val root = rootInActiveWindow
+        if (root == null) {
+            if (eventPkg !in supported) hideBubble()
+            return
+        }
+        // Judge by the app that is really on screen now.
+        val pkg = root.packageName?.toString() ?: return
+
+        if (pkg !in supported || !isShortVideoScreen(pkg, root)) {
             lastEventTime = 0L
             hideBubble()
             return
@@ -126,22 +137,31 @@ class ReelService : AccessibilityService() {
         val l2 = Prefs.getLimit(this, 2)
         val l3 = Prefs.getLimit(this, 3)
 
-        // Vibrate exactly once when a limit is reached.
+        // Buzz exactly once when a limit is reached, with the length you chose.
+        var limitBuzz = false
         when (total) {
-            l1 -> vibrate(1000)
-            l2 -> vibrate(3000)
-            l3 -> vibrate(5000)
+            l1 -> { vibrate(TenthVibration.getLimitVibe(this, 1).toLong()); limitBuzz = true }
+            l2 -> { vibrate(TenthVibration.getLimitVibe(this, 2).toLong()); limitBuzz = true }
+            l3 -> { vibrate(TenthVibration.getLimitVibe(this, 3).toLong()); limitBuzz = true }
         }
 
-        // Pulse: double size on every 50th, grow by half on every 10th.
+        // Your own buzz on every interval reel, unless a limit buzz just played.
+        val interval = TenthVibration.getInterval(this)
+        val intervalBuzz = TenthVibration.getIntervalVibe(this)
+        if (!limitBuzz && total % interval == 0 && intervalBuzz > 0) {
+            vibrate(intervalBuzz.toLong())
+        }
+
+        // Growth: double size on every 50th, grow by half on every interval reel.
         if (total % 50 == 0) {
             pulse(2.0f)
-        } else if (total % 10 == 0) {
+        } else if (total % interval == 0) {
             pulse(1.5f)
         }
     }
 
     private fun vibrate(millis: Long) {
+        if (millis <= 0L) return
         val v = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
         try {
             if (Build.VERSION.SDK_INT >= 26) {
@@ -154,16 +174,17 @@ class ReelService : AccessibilityService() {
         }
     }
 
-    private fun pulse(scale: Float) {
+    // Grows the whole bubble: text size, padding and corners together.
+    private fun setBubbleScale(scale: Float) {
         val b = bubble ?: return
-        b.pivotX = b.width.toFloat()
-        b.pivotY = 0f
-        b.scaleX = scale
-        b.scaleY = scale
-        handler.postDelayed({
-            bubble?.scaleX = 1f
-            bubble?.scaleY = 1f
-        }, 2000)
+        b.textSize = 16f * scale
+        b.setPadding((36 * scale).toInt(), (16 * scale).toInt(), (36 * scale).toInt(), (16 * scale).toInt())
+        background?.cornerRadius = 60f * scale
+    }
+
+    private fun pulse(scale: Float) {
+        setBubbleScale(scale)
+        handler.postDelayed({ setBubbleScale(1f) }, 2000)
     }
 
     // ---- The bubble ----
