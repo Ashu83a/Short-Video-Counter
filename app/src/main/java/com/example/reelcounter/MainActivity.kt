@@ -20,6 +20,11 @@ class MainActivity : Activity() {
     private lateinit var limit1: EditText
     private lateinit var limit2: EditText
     private lateinit var limit3: EditText
+    private lateinit var limitVibe1: EditText
+    private lateinit var limitVibe2: EditText
+    private lateinit var limitVibe3: EditText
+    private lateinit var intervalBox: EditText
+    private lateinit var intervalVibe: EditText
     private lateinit var transparencyLabel: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,15 +64,44 @@ class MainActivity : Activity() {
         limit1 = makeNumberBox(Prefs.getLimit(this, 1))
         limit2 = makeNumberBox(Prefs.getLimit(this, 2))
         limit3 = makeNumberBox(Prefs.getLimit(this, 3))
-        layout.addView(label("Limit 1 (yellow, vibrates 1 second)"))
+        layout.addView(label("Limit 1 (yellow): reel number"))
         layout.addView(limit1)
-        layout.addView(label("Limit 2 (orange, vibrates 3 seconds)"))
+        layout.addView(label("Limit 2 (orange): reel number"))
         layout.addView(limit2)
-        layout.addView(label("Limit 3 (red, vibrates 5 seconds)"))
+        layout.addView(label("Limit 3 (red): reel number"))
         layout.addView(limit3)
 
+        // ---- Vibration lengths ----
+        val vibeTitle = TextView(this)
+        vibeTitle.text = "\nVibration lengths in milliseconds (0 = off, 1000 = 1 second)"
+        vibeTitle.textSize = 18f
+        layout.addView(vibeTitle)
+
+        limitVibe1 = makeNumberBox(TenthVibration.getLimitVibe(this, 1))
+        limitVibe2 = makeNumberBox(TenthVibration.getLimitVibe(this, 2))
+        limitVibe3 = makeNumberBox(TenthVibration.getLimitVibe(this, 3))
+        layout.addView(label("Buzz at limit 1"))
+        layout.addView(limitVibe1)
+        layout.addView(label("Buzz at limit 2"))
+        layout.addView(limitVibe2)
+        layout.addView(label("Buzz at limit 3"))
+        layout.addView(limitVibe3)
+
+        // ---- Interval ----
+        val intervalTitle = TextView(this)
+        intervalTitle.text = "\nRegular buzz and bubble growth"
+        intervalTitle.textSize = 18f
+        layout.addView(intervalTitle)
+
+        intervalBox = makeNumberBox(TenthVibration.getInterval(this))
+        intervalVibe = makeNumberBox(TenthVibration.getIntervalVibe(this))
+        layout.addView(label("Every how many reels (like 10, 20 or 25)"))
+        layout.addView(intervalBox)
+        layout.addView(label("Buzz length on those reels in milliseconds (0 = off)"))
+        layout.addView(intervalVibe)
+
         val saveButton = Button(this)
-        saveButton.text = "Save limits"
+        saveButton.text = "Save limits and vibration"
         saveButton.setOnClickListener { saveLimits() }
         layout.addView(saveButton)
 
@@ -133,7 +167,27 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Limits must go up: limit 1 less than limit 2 less than limit 3", Toast.LENGTH_LONG).show()
             return
         }
+        val v1 = limitVibe1.text.toString().toIntOrNull()
+        val v2 = limitVibe2.text.toString().toIntOrNull()
+        val v3 = limitVibe3.text.toString().toIntOrNull()
+        if (v1 == null || v2 == null || v3 == null || v1 !in 0..10000 || v2 !in 0..10000 || v3 !in 0..10000) {
+            Toast.makeText(this, "Limit buzz lengths must be numbers from 0 to 10000", Toast.LENGTH_LONG).show()
+            return
+        }
+        val interval = intervalBox.text.toString().toIntOrNull()
+        if (interval == null || interval !in 1..1000) {
+            Toast.makeText(this, "Interval must be a number from 1 to 1000", Toast.LENGTH_LONG).show()
+            return
+        }
+        val iv = intervalVibe.text.toString().toIntOrNull()
+        if (iv == null || iv !in 0..5000) {
+            Toast.makeText(this, "Interval buzz length must be a number from 0 to 5000", Toast.LENGTH_LONG).show()
+            return
+        }
         Prefs.setLimits(this, a, b, c)
-        Toast.makeText(this, "Limits saved", Toast.LENGTH_SHORT).show()
+        TenthVibration.setLimitVibes(this, v1, v2, v3)
+        TenthVibration.setInterval(this, interval)
+        TenthVibration.setIntervalVibe(this, iv)
+        Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
     }
 }
