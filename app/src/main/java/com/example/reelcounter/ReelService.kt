@@ -5,19 +5,28 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
-import java.util.Calendar
 
 class ReelService : AccessibilityService() {
 
     private var windowManager: WindowManager? = null
     private var bubble: TextView? = null
+    private var background: GradientDrawable? = null
+    private val handler = Handler(Looper.getMainLooper())
+
     private var lastSignature: String = ""
     private var lastCountTime: Long = 0L
+    private var lastEventTime: Long = 0L
+    private var lastPackage: String = ""
 
     override fun onServiceConnected() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -29,38 +38,56 @@ class ReelService : AccessibilityService() {
         val root = rootInActiveWindow ?: return
 
         if (!isShortVideoScreen(pkg, root)) {
+            lastEventTime = 0L
             hideBubble()
             return
         }
 
+        val now = System.currentTimeMillis()
+
+        // Stopwatch: add the time since the previous event on a reel screen.
+        // A gap longer than 15 seconds adds only 15 seconds, so a long pause
+        // with no screen changes cannot inflate the total too much.
+        if (lastEventTime != 0L && pkg == lastPackage) {
+            val gapSeconds = ((now - lastEventTime) / 1000).toInt()
+            Prefs.addSeconds(this, gapSeconds.coerceAtMost(15))
+        }
+        lastEventTime = now
+        lastPackage = pkg
+
         showBubble()
 
         val signature = buildSignature(root)
-        val now = System.currentTimeMillis()
         if (signature.isNotEmpty() && signature != lastSignature && now - lastCountTime > 1200) {
             lastSignature = signature
             lastCountTime = now
-            addOne()
+            val total = Prefs.addReel(this, appKey(pkg))
+            onNewReel(total)
         }
-        updateBubbleText()
+        refreshBubble()
     }
 
     override fun onInterrupt() {}
 
-    // True only when the screen is a Reels or Shorts player.
+    override fun onDestroy() {
+        hideBubble()
+        super.onDestroy()
+    }
+
+    private fun appKey(pkg: String): String = when (pkg) {
+        "com.instagram.android" -> "instagram"
+        "com.google.android.youtube" -> "youtube"
+        else -> "facebook"
+    }
+
+    // ---- Detecting a Reels or Shorts screen (same rule as Version 1) ----
     private fun isShortVideoScreen(pkg: String, root: AccessibilityNodeInfo): Boolean {
         return when (pkg) {
-            "com.instagram.android" -> hasViewId(root, "clips_viewer") || hasViewId(root, "clips_video_container")
-            "com.google.android.youtube" -> hasViewId(root, "reel_player_page_container") || hasViewId(root, "reel_recycler")
+            "com.instagram.android" -> searchId(root, "clips_viewer", 0) || searchId(root, "clips_video_container", 0)
+            "com.google.android.youtube" -> searchId(root, "reel_player_page_container", 0) || searchId(root, "reel_recycler", 0)
             "com.facebook.katana", "com.facebook.lite" -> findTextContains(root, "Reels")
             else -> false
         }
-    }
-
-    private fun hasViewId(root: AccessibilityNodeInfo, idPart: String): Boolean {
-        val list = root.findAccessibilityNodeInfosByViewId("")
-        list?.forEach { it.recycle() }
-        return searchId(root, idPart, 0)
     }
 
     private fun searchId(node: AccessibilityNodeInfo?, idPart: String, depth: Int): Boolean {
@@ -78,7 +105,6 @@ class ReelService : AccessibilityService() {
         return found != null && found.isNotEmpty()
     }
 
-    // A short fingerprint of the visible texts. When it changes, a new video is on screen.
     private fun buildSignature(root: AccessibilityNodeInfo): String {
         val sb = StringBuilder()
         collectText(root, sb, 0)
@@ -94,40 +120,74 @@ class ReelService : AccessibilityService() {
         }
     }
 
-    // ---- Counting, resets at midnight ----
-    private fun todayKey(): Int {
-        val c = Calendar.getInstance()
-        return c.get(Calendar.YEAR) * 1000 + c.get(Calendar.DAY_OF_YEAR)
-    }
+    // ---- What happens on each new reel ----
+    private fun onNewReel(total: Int) {
+        val l1 = Prefs.getLimit(this, 1)
+        val l2 = Prefs.getLimit(this, 2)
+        val l3 = Prefs.getLimit(this, 3)
 
-    private fun getCount(): Int {
-        val prefs = getSharedPreferences("reels", Context.MODE_PRIVATE)
-        if (prefs.getInt("day", -1) != todayKey()) {
-            prefs.edit().putInt("day", todayKey()).putInt("count", 0).apply()
+        // Vibrate exactly once when a limit is reached.
+        when (total) {
+            l1 -> vibrate(1000)
+            l2 -> vibrate(3000)
+            l3 -> vibrate(5000)
         }
-        return prefs.getInt("count", 0)
+
+        // Pulse: double size on every 50th, grow by half on every 10th.
+        if (total % 50 == 0) {
+            pulse(2.0f)
+        } else if (total % 10 == 0) {
+            pulse(1.5f)
+        }
     }
 
-    private fun addOne() {
-        val prefs = getSharedPreferences("reels", Context.MODE_PRIVATE)
-        val next = getCount() + 1
-        prefs.edit().putInt("count", next).apply()
+    private fun vibrate(millis: Long) {
+        val v = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                v.vibrate(VibrationEffect.createOneShot(millis, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                v.vibrate(millis)
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun pulse(scale: Float) {
+        val b = bubble ?: return
+        b.pivotX = b.width.toFloat()
+        b.pivotY = 0f
+        b.scaleX = scale
+        b.scaleY = scale
+        handler.postDelayed({
+            bubble?.scaleX = 1f
+            bubble?.scaleY = 1f
+        }, 2000)
     }
 
     // ---- The bubble ----
+    private fun colorFor(total: Int): Int {
+        return when {
+            total >= Prefs.getLimit(this, 3) -> Color.rgb(211, 47, 47)
+            total >= Prefs.getLimit(this, 2) -> Color.rgb(245, 124, 0)
+            total >= Prefs.getLimit(this, 1) -> Color.rgb(249, 168, 37)
+            else -> Color.rgb(51, 51, 51)
+        }
+    }
+
     private fun showBubble() {
         if (bubble != null) return
         val tv = TextView(this)
         tv.setTextColor(Color.WHITE)
-        tv.textSize = 18f
+        tv.textSize = 16f
         tv.gravity = Gravity.CENTER
-        tv.setPadding(36, 18, 36, 18)
+        tv.setPadding(36, 16, 36, 16)
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.RECTANGLE
-        bg.cornerRadius = 80f
-        bg.setColor(Color.parseColor("#CC333333"))
+        bg.cornerRadius = 60f
         tv.background = bg
-        tv.text = getCount().toString()
+        background = bg
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -139,15 +199,27 @@ class ReelService : AccessibilityService() {
         params.gravity = Gravity.TOP or Gravity.END
         params.x = 24
         params.y = 220
-        windowManager?.addView(tv, params)
-        bubble = tv
+        try {
+            windowManager?.addView(tv, params)
+            bubble = tv
+            refreshBubble()
+        } catch (e: Exception) {
+            bubble = null
+        }
     }
 
-    private fun updateBubbleText() {
-        bubble?.text = getCount().toString()
+    private fun refreshBubble() {
+        val b = bubble ?: return
+        val total = Prefs.getCount(this)
+        b.text = "$total reels\n" + Prefs.formatTime(Prefs.getSeconds(this))
+        // Transparency setting: 0 is solid, 80 is very faint.
+        val alpha = ((100 - Prefs.getTransparency(this)) * 255) / 100
+        background?.setColor(colorFor(total))
+        background?.alpha = alpha.coerceIn(40, 255)
     }
 
     private fun hideBubble() {
+        handler.removeCallbacksAndMessages(null)
         bubble?.let {
             try {
                 windowManager?.removeView(it)
@@ -155,5 +227,6 @@ class ReelService : AccessibilityService() {
             }
         }
         bubble = null
+        background = null
     }
 }
