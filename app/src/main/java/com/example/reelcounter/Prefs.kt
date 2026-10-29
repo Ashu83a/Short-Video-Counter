@@ -232,26 +232,4 @@ object Prefs {
         }
         return sb.toString()
     }
- }
-    // ---- Long videos (not reels): separate record, never affects limits ----
-    val LONG_APPS = listOf("youtube", "facebook")
-
-    fun getLongCount(c: Context, app: String, day: String = dayString()): Int =
-        p(c).getInt("long_count_${app}_$day", 0)
-
-    fun getLongSeconds(c: Context, app: String, day: String = dayString()): Int =
-        p(c).getInt("long_secs_${app}_$day", 0)
-
-    fun addLongVideo(c: Context, app: String) {
-        val day = dayString()
-        p(c).edit().putInt("long_count_${app}_$day", getLongCount(c, app, day) + 1).apply()
-    }
-
-    fun addLongSeconds(c: Context, app: String, secs: Int) {
-        if (secs <= 0) return
-        val day = dayString()
-        p(c).edit().putInt("long_secs_${app}_$day", getLongSeconds(c, app, day) + secs).apply()
-    }
-
-    fun sumLongCount(c: Context, app: String, days: Int): Int = sumOver(days) { getLongCount(c, app, it) }
-    fun sumLongSeconds(c: Context, app: String, days: Int): Int = sumOver(days) { getLongSeconds(c, app, it) }
+}
