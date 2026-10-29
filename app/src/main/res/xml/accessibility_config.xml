@@ -5,5 +5,4 @@
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="300"
-    android:packageNames="com.instagram.android,com.google.android.youtube,com.facebook.katana,com.facebook.lite"
     android:description="@string/service_description" />
